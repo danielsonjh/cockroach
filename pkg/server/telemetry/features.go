@@ -15,13 +15,17 @@
 package telemetry
 
 import (
+	"context"
 	"fmt"
 	"sync/atomic"
 
+	"github.com/cockroachdb/cockroach/pkg/errors"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgerror"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/metric"
+	"github.com/cockroachdb/cockroach/pkg/util/pgcode"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
+	"github.com/kr/pretty"
 )
 
 // Bucket10 buckets a number by order of magnitude base 10, eg 637 -> 100.
@@ -221,26 +225,24 @@ func RecordError(err error) {
 		return
 	}
 
-	if pgErr, ok := pgerror.GetPGCause(err); ok {
-		Count("errorcodes." + pgErr.Code)
+	log.Warningf(context.TODO(), "WOOPS %# v", pretty.Formatter(err))
+	code := pgerror.GetPGCode(err)
+	Count("errorcodes." + code)
 
-		if details := pgErr.TelemetryKey; details != "" {
-			var prefix string
-			switch pgErr.Code {
-			case pgerror.CodeFeatureNotSupportedError:
-				prefix = "unimplemented."
-			case pgerror.CodeInternalError:
-				prefix = "internalerror."
-			default:
-				prefix = "othererror." + pgErr.Code + "."
-			}
-			Count(prefix + details)
+	tkeys := errors.GetTelemetryKeys(err)
+	if len(tkeys) > 0 {
+		var prefix string
+		switch code {
+		case pgcode.FeatureNotSupported:
+			prefix = "unimplemented."
+		case pgcode.Internal:
+			prefix = "internalerror."
+		default:
+			prefix = "othererror." + code + "."
 		}
-	} else {
-		typ := log.ErrorSource(err)
-		if typ == "" {
-			typ = "unknown"
+
+		for _, tk := range tkeys {
+			Count(prefix + tk)
 		}
-		Count("othererror." + typ)
 	}
 }
